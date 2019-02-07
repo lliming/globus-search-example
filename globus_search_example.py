@@ -23,32 +23,6 @@ def index():
          return render_template('not-logged-in.html', pagetitle=app.config['APP_DISPLAY_NAME'], loginurl=url_for('login'))
     logout_uri = url_for('logout', _external=True)
 
-    # get the stored access token for the Auth API and use it 
-    # to authorize stuff AS THE AUTHENTICATED USER
-    auth_token = str(session.get('tokens')['auth.globus.org']['access_token'])
-    ac = globus_sdk.AuthClient(authorizer=globus_sdk.AccessTokenAuthorizer(auth_token))
-
-    try:
-         # use Auth API to get more info about the authenticated user
-         myids = ac.get_identities(ids=str(session.get('username')),include="identity_provider").data
-
-         # use Auth API to get the standard OIDC userinfo fields (like any OIDC client)
-         oidcinfo = ac.oauth2_userinfo()
-
-         # get the stored OIDC id_token
-         myoidc = session.get('id_token')
-
-         # authenticate to Auth API AS AN APPLICATION and find out still more information
-         cc = load_app_client()
-         ir = cc.oauth2_token_introspect(auth_token,include='identities_set,session_info').data
-    except GlobusAPIError:
-         # if any of the above have issues, trash the session and start over
-         session.clear()
-         return redirect(url_for('index'))
-         
-    # use session data to find out how the user authenticated
-    authevents = get_auth_events(ir,oidcinfo)
-
     # prepare the actions links
     idslink = "https://auth.globus.org/v2/web/identities?client_id={}&redirect_uri={}&redirect_name={}"
     conslink = "https://auth.globus.org/v2/web/consents?client_id={}&redirect_uri={}&redirect_name={}"
@@ -56,21 +30,10 @@ def index():
     # display all this information on the web page
     return render_template('logged-in.html', pagetitle=app.config['APP_DISPLAY_NAME'], 
          fullname=str(session.get('realname')),
-         username=str(session.get('username')),
-         authevents=authevents,
+         username=str(session.get('identity')),
          logouturl=logout_uri,
          idsurl=idslink.format(app.config['APP_CLIENT_ID'],url_for('index',_external=True),app.config['APP_DISPLAY_NAME']),
-         consentsurl=conslink.format(app.config['APP_CLIENT_ID'],url_for('index',_external=True),app.config['APP_DISPLAY_NAME']),
-         oidcexplanationurl=url_for('oidc_explanation'),
-         oidcname=oidcinfo["name"],
-         oidcemail=oidcinfo["email"],
-         oidcprefname=oidcinfo["preferred_username"],
-         oidcsub=oidcinfo["sub"],
-         id_token=json.dumps(myoidc,indent=3),
-         oidcinfo=json.dumps(oidcinfo.data,indent=3),
-         globusexplanationurl=url_for('globus_explanation'),
-         globusmyids=json.dumps(myids,indent=3),
-         globusintrores=json.dumps(ir,indent=3))
+         consentsurl=conslink.format(app.config['APP_CLIENT_ID'],url_for('index',_external=True),app.config['APP_DISPLAY_NAME']))
 
 @app.route('/login')
 def login():
@@ -88,7 +51,7 @@ def login():
 
     auth_client = load_app_client()
     auth_client.oauth2_start_flow(redirect_uri, 
-            requested_scopes='openid email profile urn:globus:auth:scope:auth.globus.org:view_identity_set')
+            requested_scopes='openid email profile urn:globus:auth:scope:search.api.globus.org:all')
 
     # If there's no "code" query string parameter, we're in this route
     # starting a Globus Auth login flow.
@@ -106,6 +69,7 @@ def login():
                 tokens=tokens_response.by_resource_server,
                 id_token=ids,
                 username=ids['sub'],
+                identity=ids['preferred_username'],
                 realname=ids['name'],
                 is_authenticated=True
                 )
@@ -142,60 +106,6 @@ def logout():
     # Redirect the user to the Globus Auth logout page
     return redirect(globus_logout_url)
 
-@app.route("/oidc-explanation")
-def oidc_explanation():
-    if not session.get('is_authenticated'):
-         # display all this information on the web page
-         return render_template('not-logged-in.html', pagetitle=app.config['APP_DISPLAY_NAME'], loginurl=url_for('login'))
-
-    # get the id_token from session context
-    myoidc = session.get('id_token')
-    primaryidp = myoidc['identity_provider_display_name'];
-
-    # get the stored access token for the Auth API and use it 
-    # to authorize stuff AS THE AUTHENTICATED USER
-    auth_token = str(session.get('tokens')['auth.globus.org']['access_token'])
-    ac = globus_sdk.AuthClient(authorizer=globus_sdk.AccessTokenAuthorizer(auth_token))
-
-    # get the identity_set from oauth2_userinfo()
-    try:
-         # use Auth API to get more info about the authenticated user
-         myids = ac.get_identities(ids=str(session.get('username')),include="identity_provider").data
-
-         # use Auth API to get the standard OIDC userinfo fields (like any OIDC client)
-         oidcinfo = ac.oauth2_userinfo()
-    except GlobusAPIError:
-         # if any of the above have issues, trash the session and start over
-         session.clear()
-         return redirect(url_for('index'))
-         
-    # there will always be at least one entry in the identity_set
-    idsetproviders = ''
-    first = True
-    for id in oidcinfo.data['identity_set']:
-         if first:
-              first = False
-         else:
-              idsetproviders += ', '
-         idsetproviders += id['identity_provider_display_name']
-    return render_template('oidc-explanation.html', pagetitle=app.config['APP_DISPLAY_NAME'],
-                           returnurl=url_for('index'),
-                           primaryidp=primaryidp,
-                           idsetproviders=idsetproviders)
-
-@app.route("/globus-explanation")
-def globus_explanation():
-    if not session.get('is_authenticated'):
-         # display all this information on the web page
-         return render_template('not-logged-in.html', pagetitle=app.config['APP_DISPLAY_NAME'], loginurl=url_for('login'))
-
-    # get the id_token from session context
-    myoidc = session.get('id_token')
-    primaryidp = myoidc['identity_provider_display_name'];
-
-    return render_template('globus-explanation.html', pagetitle=app.config['APP_DISPLAY_NAME'],
-                           returnurl=url_for('index'),
-                           primaryidp=primaryidp)
 
 @app.route("/privacy")
 def privacy():
@@ -206,31 +116,7 @@ def load_app_client():
     return globus_sdk.ConfidentialAppAuthClient(
         app.config['APP_CLIENT_ID'], app.config['APP_CLIENT_SECRET'])
 
-def get_auth_events(introspectdata,oidcinfo):
-    try:
-        authns=introspectdata['session_info']['authentications']
-    except:
-        # There isn't a proper session_info entry in the token introspection results.
-        return "Who let you in here?"
-    if len(authns)<1:
-        # The user didn't have to authenticate because there was an open session from another application.
-        return "You didn't have to authenticate when you logged in."
 
-    # There are authentication events!
-    timenow = time.time()
-    auth_events = ''
-    first = True
-    for authid,authdata in authns.items():
-        # How long has it been since this event?
-        duration = int((timenow-authdata['auth_time'])/60)
-        # Look up the IdP in the identity_set from the oidcinfo structure.
-        idp = '(unknown)'
-        for id in oidcinfo.data['identity_set']:
-            if (id['identity_provider'] == authdata['idp']):
-                 idp = id['identity_provider_display_name']
-        auth_events += 'You authenticated {} minutes ago with {}. '.format(duration,idp)
-    return auth_events
-    
 # actually run the app if this is called as a script
 if __name__ == '__main__':
     app.run(host='0.0.0.0',port=5000,debug=True,ssl_context=('./keys/server.crt', './keys/server.key'))
