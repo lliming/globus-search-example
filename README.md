@@ -3,7 +3,7 @@ This is a Web app that demonstrates how to use Globus Search in a web app. Users
 basic Globus Search API features, both with and without Globus access tokens.
 It is intended to be deployed on a public Web server so that one can connect to it using a Web browser, 
 login, see how the Globus Search API works in a simple app, logout, and see how the same functions
-work without authentciation. The purpose of the app is to show web developers how the Globus Auth API
+work without authentication. The purpose of the app is to show web developers how the Globus Auth API
 (for logging in/out) and Search API work so they can then write their own apps that use the Search API.
 
 This app is meant to be deployed as a [WSGI application](https://wsgi.readthedocs.io/en/latest/)

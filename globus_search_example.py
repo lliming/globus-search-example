@@ -9,7 +9,7 @@ import time
 
 
 app = Flask(__name__)
-app.config.from_pyfile('globus_id_explorer.conf')
+app.config.from_pyfile('globus_search_example.conf')
 
 @app.route('/')
 def index():
