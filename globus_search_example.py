@@ -13,27 +13,13 @@ app.config.from_pyfile('globus_search_example.conf')
 
 @app.route('/')
 def index():
-    """
-    This could be any page you like, rendered by Flask.
-    For this simple example, it will either redirect you to login, or print
-    a simple message.
-    """
-    if not session.get('is_authenticated'):
-         # display all this information on the web page
-         return render_template('not-logged-in.html', pagetitle=app.config['APP_DISPLAY_NAME'], loginurl=url_for('login'))
-    logout_uri = url_for('logout', _external=True)
-
-    # prepare the actions links
-    idslink = "https://auth.globus.org/v2/web/identities?client_id={}&redirect_uri={}&redirect_name={}"
-    conslink = "https://auth.globus.org/v2/web/consents?client_id={}&redirect_uri={}&redirect_name={}"
+    # Call get_login_status() to fill out the login status variables (for login/logout display)
+    loginstatus = get_login_status()
 
     # display all this information on the web page
-    return render_template('logged-in.html', pagetitle=app.config['APP_DISPLAY_NAME'], 
-         fullname=str(session.get('realname')),
-         username=str(session.get('identity')),
-         logouturl=logout_uri,
-         idsurl=idslink.format(app.config['APP_CLIENT_ID'],url_for('index',_external=True),app.config['APP_DISPLAY_NAME']),
-         consentsurl=conslink.format(app.config['APP_CLIENT_ID'],url_for('index',_external=True),app.config['APP_DISPLAY_NAME']))
+    return render_template('index.html', 
+                           pagetitle=app.config['APP_DISPLAY_NAME'], 
+                           loginstat=loginstatus)
 
 @app.route('/login')
 def login():
@@ -64,13 +50,19 @@ def login():
     else:
         code = request.args.get('code')
         tokens_response = auth_client.oauth2_exchange_code_for_tokens(code)
-        ids = tokens_response.decode_id_token()
+
+        # Get the id_token (ids) that tells us who this user is (for the login/logout display)
+        id_token = tokens_response.decode_id_token()
+
+        # Get the Search API token (for authenticating Search API requests)
+        search_token_data = tokens_response.by_resource_server['search.api.globus.org']
+        SEARCH_TOKEN = search_token_data['access_token']
+
         session.update(
-                tokens=tokens_response.by_resource_server,
-                id_token=ids,
-                username=ids['sub'],
-                identity=ids['preferred_username'],
-                realname=ids['name'],
+                search_token=SEARCH_TOKEN,
+                userid=id_token['sub'],
+                identity=id_token['preferred_username'],
+                fullname=id_token['name'],
                 is_authenticated=True
                 )
         return redirect(url_for('index'))
@@ -78,16 +70,9 @@ def login():
 @app.route("/logout")
 def logout():
     """
-    - Revoke the tokens with Globus Auth.
     - Destroy the session state.
     - Redirect the user to the Globus Auth logout page.
     """
-    client = load_app_client()
-
-    # Revoke the tokens with Globus Auth
-    for token in (token_info['access_token']
-                  for token_info in session['tokens'].values()):
-        client.oauth2_revoke_token(token)
 
     # Destroy the session state
     session.clear()
@@ -109,12 +94,37 @@ def logout():
 
 @app.route("/privacy")
 def privacy():
-    return render_template('privacy.html', pagetitle=app.config['APP_DISPLAY_NAME'],
+    # Call get_login_status() to fill out the login status variables (for login/logout display)
+    loginstatus = get_login_status()
+
+    return render_template('privacy.html', 
+                           loginstat=loginstatus,
+                           pagetitle=app.config['APP_DISPLAY_NAME'],
                            returnurl=url_for('index'))
 
 def load_app_client():
     return globus_sdk.ConfidentialAppAuthClient(
         app.config['APP_CLIENT_ID'], app.config['APP_CLIENT_SECRET'])
+
+def get_login_status():
+    # This function returns a dictionary containing login information for the current session.
+    # It is used to populate the login section of the UI.
+    loginstat = dict()
+    if not session.get('is_authenticated'):
+         # prepare an empty status
+         loginstat["status"] = False
+         loginstat["loginlink"] = url_for('login')
+         loginstat["logoutlink"] = ''
+         loginstat["fullname"] = ''
+         loginstat["identity"] = ''
+    else:
+         # User is logged in
+         loginstat["status"] = True
+         loginstat["loginlink"] = ''
+         loginstat["logoutlink"] = url_for('logout', _external=True)
+         loginstat["fullname"] = str(session.get('fullname'))
+         loginstat["identity"] = str(session.get('identity'))
+    return loginstat
 
 
 # actually run the app if this is called as a script
